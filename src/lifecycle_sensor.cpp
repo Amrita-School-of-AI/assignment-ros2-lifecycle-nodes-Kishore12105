@@ -1,104 +1,110 @@
-#include <rclcpp_lifecycle/lifecycle_node.hpp>
-#include <rclcpp/rclcpp.hpp>
-#include <std_msgs/msg/float64.hpp>
-
-#include <chrono>
 #include <memory>
+#include <chrono>
 #include <random>
 
+#include "rclcpp/rclcpp.hpp"
+#include "rclcpp_lifecycle/lifecycle_node.hpp"
+#include "std_msgs/msg/float64.hpp"
+
 using namespace std::chrono_literals;
-using CallbackReturn = rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn;
 
 class LifecycleSensor : public rclcpp_lifecycle::LifecycleNode
 {
 public:
-  LifecycleSensor()
-  : LifecycleNode("lifecycle_sensor"),
-    publisher_(nullptr),
-    timer_(nullptr)
+  explicit LifecycleSensor()
+  : rclcpp_lifecycle::LifecycleNode("lifecycle_sensor"),
+    generator_(std::random_device{}()),
+    distribution_(0.0, 100.0)
   {
-    // Nothing here — important: do not create pub/timer in constructor
+    RCLCPP_INFO(get_logger(), "Lifecycle Sensor node created");
   }
 
 private:
-  CallbackReturn on_configure(const rclcpp_lifecycle::State &)
+  // Publisher
+  rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Float64>::SharedPtr publisher_;
+
+  // Timer
+  rclcpp::TimerBase::SharedPtr timer_;
+
+  // Random number generator
+  std::mt19937 generator_;
+  std::uniform_real_distribution<double> distribution_;
+
+  // ================= Lifecycle Callbacks =================
+
+  rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
+  on_configure(const rclcpp_lifecycle::State &)
   {
     publisher_ = this->create_publisher<std_msgs::msg::Float64>(
       "/sensor_data", 10);
 
-    RCLCPP_INFO(this->get_logger(), "Sensor configured");
+    RCLCPP_INFO(get_logger(), "Sensor configured");
 
-    return CallbackReturn::SUCCESS;
+    return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
   }
 
-  CallbackReturn on_activate(const rclcpp_lifecycle::State &)
+  rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
+  on_activate(const rclcpp_lifecycle::State &)
   {
+    publisher_->on_activate();
+
     timer_ = this->create_wall_timer(
       500ms,
-      std::bind(&LifecycleSensor::timer_callback, this));
+      [this]() {
+        auto msg = std_msgs::msg::Float64();
+        msg.data = distribution_(generator_);
 
-    RCLCPP_INFO(this->get_logger(), "Sensor activated");
+        publisher_->publish(msg);
+        RCLCPP_INFO(get_logger(), "Publishing sensor data: %.2f", msg.data);
+      });
 
-    return CallbackReturn::SUCCESS;
+    RCLCPP_INFO(get_logger(), "Sensor activated");
+
+    return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
   }
 
-  CallbackReturn on_deactivate(const rclcpp_lifecycle::State &)
+  rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
+  on_deactivate(const rclcpp_lifecycle::State &)
   {
-    timer_.reset();
-
-    RCLCPP_INFO(this->get_logger(), "Sensor deactivated");
-
-    return CallbackReturn::SUCCESS;
-  }
-
-  CallbackReturn on_cleanup(const rclcpp_lifecycle::State &)
-  {
-    publisher_.reset();
-    timer_.reset();
-
-    RCLCPP_INFO(this->get_logger(), "Sensor cleaned up");
-
-    return CallbackReturn::SUCCESS;
-  }
-
-  CallbackReturn on_shutdown(const rclcpp_lifecycle::State & state)
-  {
-    RCLCPP_INFO(this->get_logger(), "Sensor shutting down (from state: %s)",
-                state.label().c_str());
-
-    publisher_.reset();
-    timer_.reset();
-
-    return CallbackReturn::SUCCESS;
-  }
-
-  void timer_callback()
-  {
-    if (!publisher_ || !publisher_->is_activated()) {
-      return;
+    if (timer_) {
+      timer_->cancel();
     }
 
-    auto msg = std_msgs::msg::Float64();
-    msg.data = dist_(gen_);
+    publisher_->on_deactivate();
 
-    publisher_->publish(msg);
-    RCLCPP_INFO(this->get_logger(), "Publishing sensor data: %.2f", msg.data);
+    RCLCPP_INFO(get_logger(), "Sensor deactivated");
+
+    return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
   }
 
-  // ── Members ─────────────────────────────────────────────────────────────
-  rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr publisher_;
-  rclcpp::TimerBase::SharedPtr timer_;
+  rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
+  on_cleanup(const rclcpp_lifecycle::State &)
+  {
+    publisher_.reset();
+    timer_.reset();
 
-  std::random_device rd_;
-  std::mt19937 gen_{rd_()};
-  std::uniform_real_distribution<double> dist_{0.0, 100.0};
+    RCLCPP_INFO(get_logger(), "Sensor cleaned up");
+
+    return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
+  }
+
+  rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn
+  on_shutdown(const rclcpp_lifecycle::State &)
+  {
+    RCLCPP_INFO(get_logger(), "Sensor shutting down");
+
+    return rclcpp_lifecycle::node_interfaces::LifecycleNodeInterface::CallbackReturn::SUCCESS;
+  }
 };
 
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
+
   auto node = std::make_shared<LifecycleSensor>();
+
   rclcpp::spin(node->get_node_base_interface());
+
   rclcpp::shutdown();
   return 0;
 }
